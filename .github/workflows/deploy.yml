@@ -1,10 +1,12 @@
 name: Deploy
 
 on:
-  push:
+  # Deploy only after the CI workflow succeeds for this commit, so an
+  # upstream/fork sync can never put a broken build live.
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
     branches: [main]
-    paths-ignore:
-      - "**/*.md"
   workflow_dispatch:
 
 concurrency:
@@ -13,6 +15,9 @@ concurrency:
 
 jobs:
   deploy:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     steps:
       - name: Check deployment secrets
@@ -35,20 +40,25 @@ jobs:
           SSH_HOST: ${{ secrets.SSH_HOST }}
           SSH_USER: ${{ secrets.SSH_USER }}
           SSH_KEY: ${{ secrets.SSH_KEY }}
+          TARGET_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           install -m 700 -d ~/.ssh
           printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
           ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o ConnectTimeout=20 \
-            "$SSH_USER@$SSH_HOST" 'bash -s' <<'REMOTE'
+            "$SSH_USER@$SSH_HOST" "TARGET_SHA=$TARGET_SHA bash -s" <<'REMOTE'
           set -euo pipefail
           cd /opt/chrysolyte-web
 
           PREV=$(git rev-parse HEAD)
           echo "Previous commit: $PREV"
           git fetch origin main
-          git reset --hard origin/main
+          if [ -n "${TARGET_SHA:-}" ]; then
+            git reset --hard "$TARGET_SHA"
+          else
+            git reset --hard origin/main
+          fi
           echo "Deploying: $(git rev-parse --short HEAD)"
 
           build() {
