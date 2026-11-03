@@ -1,0 +1,46 @@
+name: Sync upstream
+
+on:
+  schedule:
+    # Daily at 04:00 UTC.
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Merge Ephy-kimotho/chrysolyte into main
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream https://github.com/Ephy-kimotho/chrysolyte.git
+          git fetch upstream main
+
+          if git merge-base --is-ancestor upstream/main HEAD; then
+            echo "Already up to date with upstream."
+            exit 0
+          fi
+
+          echo "Upstream has new commits:"
+          git log --oneline HEAD..upstream/main
+
+          if ! git merge --no-ff upstream/main -m "chore: sync upstream $(git rev-parse --short upstream/main)"; then
+            echo "::error::Upstream merge has conflicts. Resolve locally and push."
+            exit 1
+          fi
+
+          git push origin HEAD:main
+          echo "Synced. CI runs next; deploy only starts if the build passes."
